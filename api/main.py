@@ -105,7 +105,7 @@ def search(q: str = Query(min_length=2, max_length=120)):
             except Exception as exc: errors.append(name + ": " + str(exc)[:120])
     def price_key(x):
         p = x.get("price")
-        return (p is None or not re.fullmatch(r"\\d+(\\.\\d+)?", str(p)), float(p) if p is not None and re.fullmatch(r"\\d+(\\.\\d+)?", str(p)) else float("inf"))
+        return (p is None or not re.fullmatch(r"\d+(\.\d+)?", str(p)), float(p) if p is not None and re.fullmatch(r"\d+(\.\d+)?", str(p)) else float("inf"))
     results.sort(key=price_key)
     return {"query": q, "results": results, "errors": errors, "updated_at": int(time.time()),
             "notice": "Prices and stock only appear when supplier product metadata provides them; unknown is not out of stock."}
