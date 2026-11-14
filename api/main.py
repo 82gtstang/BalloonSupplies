@@ -1,4 +1,4 @@
-"""Balloon Price Finder API. Requires a Google Programmable Search JSON API key and search engine ID."""
+"""Balloon Price Finder API backed by self-hosted SearXNG."""
 import json
 import os
 import re
@@ -71,15 +71,14 @@ def product_metadata(url, domain):
     except Exception: pass
     return {}
 
-def search_supplier(name, domain, query, key, cx):
-    params = urlencode({"key": key, "cx": cx, "q": query + " site:" + domain, "num": 5})
-    data = get_json("https://www.googleapis.com/customsearch/v1?" + params)
+def search_supplier(name, domain, query, searxng_url):
+    params = urlencode({"q": query + " site:" + domain, "format": "json", "categories": "general"})
+    data = get_json(searxng_url.rstrip("/") + "/search?" + params)
     out = []
-    for item in data.get("items", []):
-        url = item.get("link", "")
+    for item in data.get("results", []):
+        url = item.get("url", "")
         if not allowed(url, domain): continue
         metadata = product_metadata(url, domain)
-        # Search snippets do not establish prices or stock.
         out.append({"supplier": name, "name": metadata.get("name") or item.get("title", "Product"),
                     "url": url, "price": metadata.get("price"), "currency": metadata.get("currency", "USD"),
                     "stock": metadata.get("stock", "unknown"), "source": "product_jsonld" if metadata else "search_result"})
@@ -87,7 +86,7 @@ def search_supplier(name, domain, query, key, cx):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "search_configured": bool(os.getenv("GOOGLE_SEARCH_API_KEY") and os.getenv("GOOGLE_SEARCH_ENGINE_ID"))}
+    return {"ok": True, "search_configured": bool(os.getenv("SEARXNG_URL")), "provider": "searxng"}
 
 @app.get("/suppliers")
 def suppliers():
@@ -95,16 +94,18 @@ def suppliers():
 
 @app.get("/search")
 def search(q: str = Query(min_length=2, max_length=120)):
-    key = os.getenv("GOOGLE_SEARCH_API_KEY")
-    cx = os.getenv("GOOGLE_SEARCH_ENGINE_ID")
-    if not key or not cx:
-        raise HTTPException(503, "Search API not configured. Set GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_ENGINE_ID on the server.")
+    searxng_url = os.getenv("SEARXNG_URL", "").strip()
+    if not searxng_url:
+        raise HTTPException(503, "Set SEARXNG_URL to the internal SearXNG service address.")
     results, errors = [], []
     with ThreadPoolExecutor(max_workers=5) as pool:
-        futures = {pool.submit(search_supplier, name, domain, q, key, cx): name for name, domain in SUPPLIERS.items()}
+        futures = {pool.submit(search_supplier, name, domain, q, searxng_url): name for name, domain in SUPPLIERS.items()}
         for future, name in futures.items():
             try: results.extend(future.result(timeout=30))
             except Exception as exc: errors.append(name + ": " + str(exc)[:120])
-    results.sort(key=lambda x: (x["price"] is None, float(x["price"]) if x["price"] and re.fullmatch(r"\d+(\.\d+)?", x["price"]) else float("inf")))
+    def price_key(x):
+        p = x.get("price")
+        return (p is None or not re.fullmatch(r"\\d+(\\.\\d+)?", str(p)), float(p) if p is not None and re.fullmatch(r"\\d+(\\.\\d+)?", str(p)) else float("inf"))
+    results.sort(key=price_key)
     return {"query": q, "results": results, "errors": errors, "updated_at": int(time.time()),
-            "notice": "Prices and stock are only shown when product structured data provides them; unknown is not out of stock."}
+            "notice": "Prices and stock only appear when supplier product metadata provides them; unknown is not out of stock."}
