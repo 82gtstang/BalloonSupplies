@@ -51,6 +51,7 @@ class MainActivity : Activity() {
                 LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         }
         action("Search web") { searchWeb() }
+        action("Google search") { googleSearch() }
         action("CSV prices") { renderOffers() }
         action("Import CSV") { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "*/*" }, 42) }
         root.addView(actions)
@@ -70,6 +71,11 @@ class MainActivity : Activity() {
         if (!url.startsWith("https://")) return
         try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
         catch (_: Exception) { Toast.makeText(this, "Cannot open product", Toast.LENGTH_SHORT).show() }
+    }
+    private fun googleSearch() {
+        val q = search.text.toString().trim()
+        if (q.length < 2) { Toast.makeText(this, "Enter a balloon name", Toast.LENGTH_SHORT).show(); return }
+        open("https://cse.google.com/cse?cx=263954e4ff7544c90&q=" + URLEncoder.encode(q, "UTF-8"))
     }
     private fun searchWeb() {
         val q = search.text.toString().trim()
@@ -137,7 +143,7 @@ class MainActivity : Activity() {
             terms.all { hay.contains(it) }
         }.sortedBy { it.unitPrice }
         summary.text = matched.size.toString() + " imported catalog matches. Use Search web for live product metadata."
-        if (offers.isEmpty()) results.addView(label("No CSV catalog imported. Enter your API server URL and tap Search web for online results.", 14f))
+        if (offers.isEmpty()) results.addView(label("No CSV catalog imported. Use Google search for free browser results, or configure the API for in-app results.", 14f))
         matched.forEach { o ->
             val card = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(14,12,14,12); setBackgroundColor(Color.WHITE) }
             card.addView(label(o.name + " — " + o.supplier, 17f))
