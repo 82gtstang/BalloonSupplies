@@ -1,18 +1,16 @@
-# Balloon Price Finder Search API
+# Free SearXNG search server for Balloon Price Finder
 
-This is a separate **server**; it cannot be hosted by GitHub Actions. Deploy it to a Python web host (Render, Railway, Fly.io, VPS, etc.). No supplier partnerships or private supplier APIs are implied.
+The backend uses self-hosted **SearXNG** instead of Google. No paid search API key required.
 
-## Setup
+## Docker Compose setup
 
-1. Create a Google Programmable Search Engine configured to search the entire web, and enable the **Custom Search JSON API** in Google Cloud.
-2. Set environment variables `GOOGLE_SEARCH_API_KEY` and `GOOGLE_SEARCH_ENGINE_ID` (the `cx` identifier) on the host. Never put the API key in the Android app or GitHub source.
-3. Install dependencies: `pip install -r api/requirements.txt`.
-4. Start from repository root: `uvicorn api.main:app --host 0.0.0.0 --port 8000` (or the host's `PORT`).
-5. Open `https://YOUR-HOST/health` and verify `search_configured: true`.
-6. Paste `https://YOUR-HOST` into the Android app's API URL field.
+1. On a computer or VPS with Docker Compose, clone this GitHub repository.
+2. Copy `.env.example` to `.env`. Replace `SEARXNG_SECRET` with a long random secret; never commit `.env`.
+3. Run `docker compose up -d --build`.
+4. Test `http://127.0.0.1:8000/health` and `http://127.0.0.1:8000/search?q=Sempertex%20260%20red`.
+5. Set up an HTTPS reverse proxy to `127.0.0.1:8000`, with authentication and rate limiting before public exposure.
+6. Enter the public HTTPS URL in the Android app's API field, then tap **Search web**.
 
-API: `GET /search?q=Sempertex%20260%20red`, `GET /suppliers`, `GET /health`.
+Only the API listens on localhost port 8000; SearXNG is internal to the Compose network. An HTTPS host/tunnel is required for your phone to connect. GitHub Actions builds the APK but cannot host a persistent search server.
 
-Search uses Google Programmable Search results restricted to the five supplier domains, then reads public Product JSON-LD when site crawling policies permit. It does **not** guarantee a live inventory feed: prices are null and stock is unknown when structured data is missing, stale, blocked, or incomplete. Some suppliers may block automated access. Search API quotas/charges and supplier website terms apply. The current implementation performs up to five Google queries per search and should be protected by server-side rate limits and authentication before public deployment.
-
-Do not treat search result snippets as proof of price or stock. Checkout is on the original supplier's site.
+The server searches five supplier domains and reads public Product JSON-LD metadata where allowed. It does not guarantee live prices or inventory. Unknown stock is not out of stock. Supplier robots policies, search engine limits and host expenses still apply.
