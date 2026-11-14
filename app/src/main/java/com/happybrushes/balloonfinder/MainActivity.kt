@@ -7,6 +7,9 @@ import android.net.Uri
 import android.graphics.Color
 import android.view.View
 import android.widget.*
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
 import java.net.URLEncoder
 import java.util.Locale
 
@@ -23,23 +26,35 @@ class MainActivity : Activity() {
     )
     private val offers = mutableListOf<Offer>()
     private lateinit var search: EditText
+    private lateinit var apiUrl: EditText
     private lateinit var results: LinearLayout
     private lateinit var summary: TextView
     private val blue = Color.rgb(24, 92, 182)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(20, 24, 20, 12); setBackgroundColor(Color.rgb(247,249,253)) }
-        val title = TextView(this).apply { text = "🎈 Balloon Price Finder"; textSize = 25f; setTextColor(blue); setPadding(0,0,0,8) }
-        root.addView(title)
-        root.addView(TextView(this).apply { text = "Compare catalog prices • Search supplier websites"; textSize = 14f; setTextColor(Color.DKGRAY) })
-        search = EditText(this).apply { hint = "Search: Sempertex 260 red, 5 inch..."; setSingleLine(true) }
+        root.addView(TextView(this).apply { text = "🎈 Balloon Price Finder v2"; textSize = 24f; setTextColor(blue); setPadding(0,0,0,8) })
+        root.addView(label("Search 5 suppliers • Compare verified web prices and stock", 13f))
+        search = EditText(this).apply { hint = "Sempertex 260 red"; setSingleLine(true) }
         root.addView(search)
+        apiUrl = EditText(this).apply {
+            hint = "API server URL (https://your-server.example)"
+            setSingleLine(true)
+            setText(getPreferences(MODE_PRIVATE).getString("api_url", ""))
+            textSize = 13f
+        }
+        root.addView(apiUrl)
         val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        fun action(label: String, click: () -> Unit) { val b = Button(this).apply { text = label; textSize = 12f; setOnClickListener { click() } }; actions.addView(b, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)) }
-        action("Compare prices") { renderOffers() }
+        fun action(label: String, click: () -> Unit) {
+            actions.addView(Button(this).apply { text = label; textSize = 11f; isAllCaps = false; setOnClickListener { click() } },
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        action("Search web") { searchWeb() }
+        action("CSV prices") { renderOffers() }
         action("Import CSV") { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "*/*" }, 42) }
         root.addView(actions)
-        summary = TextView(this).apply { textSize = 14f; setPadding(0,12,0,12); setTextColor(Color.DKGRAY) }
+        summary = label("", 13f)
         root.addView(summary)
         val scroll = ScrollView(this)
         results = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -48,32 +63,94 @@ class MainActivity : Activity() {
         setContentView(root)
         renderOffers()
     }
-    private fun label(text: String, size: Float = 16f): TextView = TextView(this).apply { this.text = text; textSize = size; setTextColor(Color.rgb(30,40,60)); setPadding(6,10,6,10) }
-    private fun open(url: String) { try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } catch (e: Exception) { Toast.makeText(this, "Cannot open link", Toast.LENGTH_SHORT).show() } }
-    private fun renderOffers() {
+    private fun label(value: String, size: Float = 16f): TextView = TextView(this).apply {
+        text = value; textSize = size; setTextColor(Color.rgb(30,40,60)); setPadding(6,10,6,10)
+    }
+    private fun open(url: String) {
+        if (!url.startsWith("https://")) return
+        try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+        catch (_: Exception) { Toast.makeText(this, "Cannot open product", Toast.LENGTH_SHORT).show() }
+    }
+    private fun searchWeb() {
+        val q = search.text.toString().trim()
+        if (q.length < 2) { Toast.makeText(this, "Enter a balloon name", Toast.LENGTH_SHORT).show(); return }
+        val base = apiUrl.text.toString().trim().trimEnd('/')
+        if (!base.startsWith("https://")) {
+            summary.text = "Enter your deployed HTTPS API address above. See api/README.md for setup."
+            return
+        }
+        getPreferences(MODE_PRIVATE).edit().putString("api_url", base).apply()
+        summary.text = "Searching supplier websites…"
         results.removeAllViews()
-        val query = search.text.toString().trim()
-        val terms = query.lowercase(Locale.US).split(Regex("\\s+")).filter { it.isNotBlank() }
-        val matched = offers.filter { o -> val hay = "${o.supplier} ${o.name} ${o.brand} ${o.size} ${o.color}".lowercase(Locale.US); terms.all { hay.contains(it) } }.sortedBy { it.unitPrice }
-        summary.text = "${matched.size} matching catalog offers • ${offers.size} imported total. Prices are from imported CSVs, not live quotes."
-        if (offers.isEmpty()) results.addView(label("No supplier prices loaded yet. Import a CSV catalog to compare prices. You can search all five supplier websites below.", 14f))
-        else if (matched.isEmpty()) results.addView(label("No matching imported offers. Try fewer keywords or search supplier websites below.", 14f))
-        matched.forEach { o ->
+        Thread {
+            try {
+                val endpoint = URL(base + "/search?q=" + URLEncoder.encode(q, "UTF-8"))
+                val connection = endpoint.openConnection() as HttpURLConnection
+                connection.connectTimeout = 15000
+                connection.readTimeout = 45000
+                try {
+                    val status = connection.responseCode
+                    val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+                    val body = stream?.bufferedReader()?.use { it.readText() } ?: ""
+                    if (status !in 200..299) throw IllegalStateException("API HTTP " + status + ": " + body.take(220))
+                    val data = JSONObject(body)
+                    runOnUiThread { renderWebResults(data) }
+                } finally { connection.disconnect() }
+            } catch (e: Exception) {
+                runOnUiThread { summary.text = "Search failed: " + (e.message ?: "Network error"); results.addView(label("Check the API URL, server configuration, and internet connection.", 13f)) }
+            }
+        }.start()
+    }
+    private fun renderWebResults(data: JSONObject) {
+        results.removeAllViews()
+        val items = data.optJSONArray("results")
+        val count = items?.length() ?: 0
+        summary.text = count.toString() + " web matches. Prices and stock shown only when verified on product pages."
+        if (count == 0) results.addView(label("No products found. Try another balloon description.", 14f))
+        for (i in 0 until count) {
+            val item = items!!.optJSONObject(i) ?: continue
+            val supplier = item.optString("supplier")
+            val name = item.optString("name")
+            val price = if (item.isNull("price")) null else item.optString("price").takeIf { it.isNotBlank() }
+            val currency = item.optString("currency", "USD")
+            val stock = when (item.optString("stock")) {
+                "in_stock" -> "In stock"
+                "out_of_stock" -> "Out of stock"
+                else -> "Stock unknown"
+            }
+            val priceText = if (price == null) "Price unavailable" else price + " " + currency
             val card = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(14,12,14,12); setBackgroundColor(Color.WHITE) }
-            card.addView(label("${o.name} — ${o.supplier}", 17f))
-            card.addView(label("${o.brand} • ${o.size} • ${o.color}\n${o.quantity} pcs • $${"%.2f".format(Locale.US,o.price)} / bag • $${"%.4f".format(Locale.US,o.unitPrice)} each", 14f))
-            if (o.url.startsWith("https://")) card.addView(Button(this).apply { text = "View product / order"; setOnClickListener { open(o.url) } })
+            card.addView(label(name, 17f))
+            card.addView(label(supplier + " • " + priceText + " • " + stock, 14f))
+            card.addView(Button(this).apply { text = "View product / order"; isAllCaps = false; setOnClickListener { open(item.optString("url")) } })
             results.addView(card)
             results.addView(View(this).apply { setBackgroundColor(Color.rgb(230,234,242)) }, LinearLayout.LayoutParams(-1, 6))
         }
-        results.addView(label("SEARCH SUPPLIER WEBSITES", 17f))
+        val errors = data.optJSONArray("errors")
+        if (errors != null && errors.length() > 0) results.addView(label("Some suppliers could not be searched. Results may be incomplete.", 13f))
+    }
+    private fun renderOffers() {
+        results.removeAllViews()
+        val terms = search.text.toString().trim().lowercase(Locale.US).split(Regex("\\s+")).filter { it.isNotBlank() }
+        val matched = offers.filter { o ->
+            val hay = (o.supplier + " " + o.name + " " + o.brand + " " + o.size + " " + o.color).lowercase(Locale.US)
+            terms.all { hay.contains(it) }
+        }.sortedBy { it.unitPrice }
+        summary.text = matched.size.toString() + " imported catalog matches. Use Search web for live product metadata."
+        if (offers.isEmpty()) results.addView(label("No CSV catalog imported. Enter your API server URL and tap Search web for online results.", 14f))
+        matched.forEach { o ->
+            val card = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(14,12,14,12); setBackgroundColor(Color.WHITE) }
+            card.addView(label(o.name + " — " + o.supplier, 17f))
+            card.addView(label(o.brand + " • " + o.size + " • " + o.color + "\n" + o.quantity + " pcs • $" + "%.2f".format(Locale.US,o.price) + " / bag • $" + "%.4f".format(Locale.US,o.unitPrice) + " each", 14f))
+            if (o.url.startsWith("https://")) card.addView(Button(this).apply { text = "View product / order"; setOnClickListener { open(o.url) } })
+            results.addView(card)
+        }
+        results.addView(label("DIRECT SUPPLIER SEARCH", 17f))
         suppliers.forEach { (name, domain) ->
-            results.addView(Button(this).apply { text = "Search $name"; isAllCaps = false; setOnClickListener {
-                val q = URLEncoder.encode("site:$domain $query balloons", "UTF-8")
-                open("https://www.google.com/search?q=$q")
+            results.addView(Button(this).apply { text = "Search " + name; isAllCaps = false; setOnClickListener {
+                open("https://www.google.com/search?q=" + URLEncoder.encode("site:" + domain + " " + search.text.toString() + " balloons", "UTF-8"))
             } })
         }
-        results.addView(label("Website searches open Google results restricted to each supplier. They are not automatically collected or price-ranked. Checkout happens on the supplier's site.", 12f))
     }
     @Deprecated("Legacy activity result used to keep project dependency-free")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -86,7 +163,7 @@ class MainActivity : Activity() {
             require(lines.isNotEmpty()) { "CSV is empty" }
             val headers = parseCsv(lines.first()).map { it.trim().lowercase(Locale.US).removePrefix("\uFEFF") }
             val required = listOf("supplier", "name", "brand", "size", "color", "quantity", "price", "url")
-            require(required.all { it in headers }) { "Missing headers. Required: ${required.joinToString()}" }
+            require(required.all { it in headers }) { "Missing headers" }
             var count = 0
             lines.drop(1).forEach { line ->
                 try {
@@ -97,13 +174,13 @@ class MainActivity : Activity() {
                     require(quantity > 0 && price >= 0 && price.isFinite())
                     val url = col("url")
                     require(url.isEmpty() || url.startsWith("https://"))
-                    offers.add(Offer(col("supplier"),col("name"),col("brand"),col("size"),col("color"),quantity,price,url))
+                    offers.add(Offer(col("supplier"), col("name"), col("brand"), col("size"), col("color"), quantity, price, url))
                     count++
-                } catch (_: Exception) { }
+                } catch (_: Exception) {}
             }
-            Toast.makeText(this, "Imported $count offers", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Imported " + count + " offers", Toast.LENGTH_LONG).show()
             renderOffers()
-        } catch (e: Exception) { Toast.makeText(this, "CSV import failed: ${e.message}", Toast.LENGTH_LONG).show() }
+        } catch (e: Exception) { Toast.makeText(this, "CSV import failed: " + e.message, Toast.LENGTH_LONG).show() }
     }
     private fun parseCsv(line: String): List<String> {
         val fields = mutableListOf<String>(); val value = StringBuilder(); var quoted = false; var i = 0
