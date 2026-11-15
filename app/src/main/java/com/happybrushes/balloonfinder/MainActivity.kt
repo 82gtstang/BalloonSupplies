@@ -34,8 +34,8 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(20, 24, 20, 12); setBackgroundColor(Color.rgb(247,249,253)) }
-        root.addView(TextView(this).apply { text = "🎈 Balloon Price Finder v2"; textSize = 24f; setTextColor(blue); setPadding(0,0,0,8) })
-        root.addView(label("Search 5 suppliers • Compare verified web prices and stock", 13f))
+        root.addView(TextView(this).apply { text = "🎈 Balloon Price Finder v3"; textSize = 24f; setTextColor(blue); setPadding(0,0,0,8) })
+        root.addView(label("Free balloon searches open supplier results in your browser. In-app prices require a connected server.", 13f))
         search = EditText(this).apply { hint = "Sempertex 260 red"; setSingleLine(true) }
         root.addView(search)
         apiUrl = EditText(this).apply {
@@ -45,13 +45,14 @@ class MainActivity : Activity() {
             textSize = 13f
         }
         root.addView(apiUrl)
-        val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val actions = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         fun action(label: String, click: () -> Unit) {
             actions.addView(Button(this).apply { text = label; textSize = 11f; isAllCaps = false; setOnClickListener { click() } },
-                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                LinearLayout.LayoutParams(-1, LinearLayout.LayoutParams.WRAP_CONTENT))
         }
-        action("Search web") { searchWeb() }
-        action("Google search") { googleSearch() }
+        action("Search balloons FREE (Google)") { googleSearch() }
+        action("Search all suppliers (browser)") { supplierBrowserSearch() }
+        action("Search in app (server required)") { searchWeb() }
         action("CSV prices") { renderOffers() }
         action("Import CSV") { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "*/*" }, 42) }
         root.addView(actions)
@@ -72,9 +73,17 @@ class MainActivity : Activity() {
         try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
         catch (_: Exception) { Toast.makeText(this, "Cannot open product", Toast.LENGTH_SHORT).show() }
     }
+    private fun supplierBrowserSearch() {
+        val q = search.text.toString().trim()
+        if (q.length < 2) { Toast.makeText(this, "Enter a balloon name", Toast.LENGTH_SHORT).show(); return }
+        val sites = suppliers.values.joinToString(" OR ") { "site:" + it }
+        summary.text = "Opening supplier results in your browser. Prices and stock must be checked on each store page."
+        open("https://www.google.com/search?q=" + URLEncoder.encode("(" + sites + ") " + q, "UTF-8"))
+    }
     private fun googleSearch() {
         val q = search.text.toString().trim()
         if (q.length < 2) { Toast.makeText(this, "Enter a balloon name", Toast.LENGTH_SHORT).show(); return }
+        summary.text = "Opening your custom Google search engine in the browser. If it shows no results, use Search all suppliers (browser)."
         open("https://cse.google.com/cse?cx=263954e4ff7544c90&q=" + URLEncoder.encode(q, "UTF-8"))
     }
     private fun searchWeb() {
@@ -82,7 +91,7 @@ class MainActivity : Activity() {
         if (q.length < 2) { Toast.makeText(this, "Enter a balloon name", Toast.LENGTH_SHORT).show(); return }
         val base = apiUrl.text.toString().trim().trimEnd('/')
         if (!base.startsWith("https://")) {
-            summary.text = "Enter your deployed HTTPS API address above. See api/README.md for setup."
+            summary.text = "In-app search needs a deployed HTTPS server. Use Search balloons FREE or Search all suppliers to search without a server."
             return
         }
         getPreferences(MODE_PRIVATE).edit().putString("api_url", base).apply()
@@ -143,7 +152,7 @@ class MainActivity : Activity() {
             terms.all { hay.contains(it) }
         }.sortedBy { it.unitPrice }
         summary.text = matched.size.toString() + " imported catalog matches. Use Search web for live product metadata."
-        if (offers.isEmpty()) results.addView(label("No CSV catalog imported. Use Google search for free browser results, or configure the API for in-app results.", 14f))
+        if (offers.isEmpty()) results.addView(label("No CSV catalog imported. Use the free browser search buttons above. In-app price/stock results require an API server.", 14f))
         matched.forEach { o ->
             val card = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(14,12,14,12); setBackgroundColor(Color.WHITE) }
             card.addView(label(o.name + " — " + o.supplier, 17f))
