@@ -64,10 +64,45 @@ class MainActivity : Activity() {
         saveCart()
         Toast.makeText(this, "Added to shopping cart", Toast.LENGTH_SHORT).show()
     }
+    private fun manualCartEntry() {
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(32, 12, 32, 8)
+        }
+        fun field(hintText: String): EditText = EditText(this).apply {
+            hint = hintText
+            setSingleLine(true)
+            layout.addView(this)
+        }
+        val nameField = field("Balloon name (required)")
+        val supplierField = field("Supplier (e.g. A2Z Balloons)")
+        val priceField = field("Bag price (optional)")
+        priceField.inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+        val urlField = field("Product URL (optional, https://...)")
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Add balloon to shopping cart")
+            .setView(layout)
+            .setPositiveButton("Add") { _, _ ->
+                val name = nameField.text.toString().trim()
+                val supplier = supplierField.text.toString().trim().ifBlank { "Unspecified supplier" }
+                val url = urlField.text.toString().trim()
+                val priceText = priceField.text.toString().trim()
+                val price = priceText.toDoubleOrNull()
+                when {
+                    name.isBlank() -> Toast.makeText(this, "Product name is required", Toast.LENGTH_LONG).show()
+                    url.isNotBlank() && !url.startsWith("https://") -> Toast.makeText(this, "Product URL must start with https://", Toast.LENGTH_LONG).show()
+                    priceText.isNotBlank() && (price == null || !price.isFinite() || price < 0) ->
+                        Toast.makeText(this, "Enter a valid price", Toast.LENGTH_LONG).show()
+                    else -> { addToCart(supplier, name, url, price, "USD"); showCart() }
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
     private fun showCart() {
         results.removeAllViews()
         summary.text = "Shopping cart • Saved on this phone. Checkout happens separately at each supplier."
-        if (cart.isEmpty()) { results.addView(label("Your shopping cart is empty. Add items from web results or imported CSV prices.")); return }
+        if (cart.isEmpty()) { results.addView(label("Your shopping cart is empty. Use Add product to cart manually, or add items from in-app search or CSV.")); results.addView(Button(this).apply { text = "➕ Add product"; setOnClickListener { manualCartEntry() } }); return }
         val totals = linkedMapOf<String, Double>()
         cart.toList().forEach { item ->
             val card = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(14, 12, 14, 12); background = rounded(0xF5FFFFFF.toInt(), 28f) }
@@ -96,6 +131,7 @@ class MainActivity : Activity() {
             "$" + "%.2f".format(Locale.US, it.value) + " " + it.key
         }
         results.addView(label("Known subtotal: " + known + "\nExcludes unknown prices, tax, shipping and supplier checkout.", 16f))
+        results.addView(Button(this).apply { text = "➕ Add another product"; setOnClickListener { manualCartEntry() } })
         results.addView(Button(this).apply { text = "Back to catalog"; setOnClickListener { renderOffers() } })
     }
     private lateinit var search: EditText
@@ -140,7 +176,7 @@ class MainActivity : Activity() {
         frame.addView(BalloonBackground(this), FrameLayout.LayoutParams(-1, -1))
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(20, 24, 20, 12) }
         frame.addView(root, FrameLayout.LayoutParams(-1, -1))
-        root.addView(TextView(this).apply { text = "🎈 Balloon Price Finder v5"; textSize = 24f; setTextColor(blue); setPadding(0,0,0,8) })
+        root.addView(TextView(this).apply { text = "🎈 Balloon Price Finder v6"; textSize = 24f; setTextColor(blue); setPadding(0,0,0,8) })
         root.addView(label("Free balloon searches open supplier results in your browser. In-app prices require a connected server.", 13f))
         search = EditText(this).apply { hint = "Sempertex 260 red"; setSingleLine(true) }
         search.background = rounded(Color.WHITE)
@@ -163,6 +199,7 @@ class MainActivity : Activity() {
         action("Search balloons FREE (Google)") { googleSearch() }
         action("Search all suppliers (browser)") { supplierBrowserSearch() }
         action("Search in app (server required)") { searchWeb() }
+        action("➕ Add product to cart manually") { manualCartEntry() }
         action("CSV prices") { renderOffers() }
         action("Import CSV") { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "*/*" }, 42) }
         root.addView(actions)
