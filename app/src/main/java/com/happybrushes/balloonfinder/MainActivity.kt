@@ -5,6 +5,11 @@ import android.os.Bundle
 import android.content.Intent
 import android.net.Uri
 import android.graphics.Color
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.LinearGradient
+import android.graphics.Shader
+import android.graphics.drawable.GradientDrawable
 import android.view.View
 import android.widget.*
 import org.json.JSONObject
@@ -31,12 +36,46 @@ class MainActivity : Activity() {
     private lateinit var summary: TextView
     private val blue = Color.rgb(24, 92, 182)
 
+    private fun rounded(color: Int, radius: Float = 24f): GradientDrawable =
+        GradientDrawable().apply { setColor(color); cornerRadius = radius }
+
+    private class BalloonBackground(context: android.content.Context) : View(context) {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            paint.shader = LinearGradient(0f, 0f, 0f, height.toFloat(),
+                Color.rgb(255, 238, 249), Color.rgb(225, 244, 255), Shader.TileMode.CLAMP)
+            canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
+            paint.shader = null
+            val balloons = arrayOf(
+                floatArrayOf(.13f,.12f,.085f), floatArrayOf(.88f,.18f,.10f),
+                floatArrayOf(.08f,.49f,.09f), floatArrayOf(.93f,.62f,.10f),
+                floatArrayOf(.18f,.88f,.09f), floatArrayOf(.81f,.94f,.08f))
+            val colors = intArrayOf(0x66FF5E9C,0x668B5CF6,0x66FFC247,0x664CC9F0,0x6679D775,0x66FF9161)
+            balloons.forEachIndexed { i, p ->
+                val x = width * p[0]; val y = height * p[1]; val r = width * p[2]
+                paint.color = colors[i]
+                canvas.drawOval(x-r, y-r*1.2f, x+r, y+r*1.2f, paint)
+                paint.color = 0x55906E9A
+                paint.strokeWidth = 2f
+                canvas.drawLine(x, y+r*1.2f, x+width*.025f, y+r*3.0f, paint)
+                paint.color = 0x66FFFFFF
+                canvas.drawOval(x-r*.6f, y-r*.85f, x-r*.3f, y-r*.25f, paint)
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(20, 24, 20, 12); setBackgroundColor(Color.rgb(247,249,253)) }
-        root.addView(TextView(this).apply { text = "🎈 Balloon Price Finder v3"; textSize = 24f; setTextColor(blue); setPadding(0,0,0,8) })
+        val frame = FrameLayout(this)
+        frame.addView(BalloonBackground(this), FrameLayout.LayoutParams(-1, -1))
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(20, 24, 20, 12) }
+        frame.addView(root, FrameLayout.LayoutParams(-1, -1))
+        root.addView(TextView(this).apply { text = "🎈 Balloon Price Finder v4"; textSize = 24f; setTextColor(blue); setPadding(0,0,0,8) })
         root.addView(label("Free balloon searches open supplier results in your browser. In-app prices require a connected server.", 13f))
         search = EditText(this).apply { hint = "Sempertex 260 red"; setSingleLine(true) }
+        search.background = rounded(Color.WHITE)
+        search.setPadding(20, 16, 20, 16)
         root.addView(search)
         apiUrl = EditText(this).apply {
             hint = "API server URL (https://your-server.example)"
@@ -44,10 +83,12 @@ class MainActivity : Activity() {
             setText(getPreferences(MODE_PRIVATE).getString("api_url", ""))
             textSize = 13f
         }
+        apiUrl.background = rounded(0xEEFFFFFF.toInt())
+        apiUrl.setPadding(20, 16, 20, 16)
         root.addView(apiUrl)
         val actions = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         fun action(label: String, click: () -> Unit) {
-            actions.addView(Button(this).apply { text = label; textSize = 11f; isAllCaps = false; setOnClickListener { click() } },
+            actions.addView(Button(this).apply { text = label; textSize = 14f; isAllCaps = false; setTextColor(Color.WHITE); backgroundTintList = android.content.res.ColorStateList.valueOf(when { label.contains("Google") -> 0xFFEC4899.toInt(); label.contains("suppliers") -> 0xFF7C3AED.toInt(); label.contains("server") -> 0xFF0284C7.toInt(); else -> 0xFF0D9488.toInt() }); setOnClickListener { click() } },
                 LinearLayout.LayoutParams(-1, LinearLayout.LayoutParams.WRAP_CONTENT))
         }
         action("Search balloons FREE (Google)") { googleSearch() }
@@ -62,7 +103,7 @@ class MainActivity : Activity() {
         results = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         scroll.addView(results)
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
-        setContentView(root)
+        setContentView(frame)
         renderOffers()
     }
     private fun label(value: String, size: Float = 16f): TextView = TextView(this).apply {
@@ -83,8 +124,8 @@ class MainActivity : Activity() {
     private fun googleSearch() {
         val q = search.text.toString().trim()
         if (q.length < 2) { Toast.makeText(this, "Enter a balloon name", Toast.LENGTH_SHORT).show(); return }
-        summary.text = "Opening your custom Google search engine in the browser. If it shows no results, use Search all suppliers (browser)."
-        open("https://cse.google.com/cse?cx=263954e4ff7544c90&q=" + URLEncoder.encode(q, "UTF-8"))
+        summary.text = "Opening regular Google search for your balloons. No custom search engine or server required."
+        open("https://www.google.com/search?q=" + URLEncoder.encode(q + " balloons", "UTF-8"))
     }
     private fun searchWeb() {
         val q = search.text.toString().trim()
@@ -134,7 +175,7 @@ class MainActivity : Activity() {
                 else -> "Stock unknown"
             }
             val priceText = if (price == null) "Price unavailable" else price + " " + currency
-            val card = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(14,12,14,12); setBackgroundColor(Color.WHITE) }
+            val card = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(14,12,14,12); background = rounded(0xF5FFFFFF.toInt(), 28f) }
             card.addView(label(name, 17f))
             card.addView(label(supplier + " • " + priceText + " • " + stock, 14f))
             card.addView(Button(this).apply { text = "View product / order"; isAllCaps = false; setOnClickListener { open(item.optString("url")) } })
