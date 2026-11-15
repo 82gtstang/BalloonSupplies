@@ -13,6 +13,7 @@ import android.graphics.drawable.GradientDrawable
 import android.view.View
 import android.widget.*
 import org.json.JSONObject
+import org.json.JSONArray
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -30,6 +31,73 @@ class MainActivity : Activity() {
         "Burton + Burton" to "burtonandburton.com"
     )
     private val offers = mutableListOf<Offer>()
+    data class CartItem(val supplier: String, val name: String, val url: String, val price: Double?, val currency: String, var quantity: Int)
+    private val cart = mutableListOf<CartItem>()
+    private lateinit var cartButton: Button
+    private fun loadCart() {
+        cart.clear()
+        try {
+            val items = JSONArray(getPreferences(MODE_PRIVATE).getString("cart_v1", "[]"))
+            for (i in 0 until items.length()) {
+                val x = items.getJSONObject(i)
+                cart.add(CartItem(x.optString("supplier"), x.optString("name"), x.optString("url"),
+                    if (x.isNull("price")) null else x.optDouble("price").takeIf { it.isFinite() && it >= 0 },
+                    x.optString("currency", "USD"), x.optInt("quantity", 1).coerceIn(1, 999)))
+            }
+        } catch (_: Exception) { cart.clear() }
+    }
+    private fun saveCart() {
+        val arr = JSONArray()
+        cart.forEach { x ->
+            arr.put(JSONObject().apply {
+                put("supplier", x.supplier); put("name", x.name); put("url", x.url)
+                put("price", x.price ?: JSONObject.NULL); put("currency", x.currency); put("quantity", x.quantity)
+            })
+        }
+        getPreferences(MODE_PRIVATE).edit().putString("cart_v1", arr.toString()).apply()
+        cartButton.text = "🛒 Shopping cart (" + cart.sumOf { it.quantity } + ")"
+    }
+    private fun addToCart(supplier: String, name: String, url: String, price: Double?, currency: String) {
+        val found = cart.firstOrNull { it.supplier == supplier && it.name == name && it.url == url && it.currency == currency }
+        if (found != null) found.quantity = (found.quantity + 1).coerceAtMost(999)
+        else cart.add(CartItem(supplier, name, url, price, currency, 1))
+        saveCart()
+        Toast.makeText(this, "Added to shopping cart", Toast.LENGTH_SHORT).show()
+    }
+    private fun showCart() {
+        results.removeAllViews()
+        summary.text = "Shopping cart • Saved on this phone. Checkout happens separately at each supplier."
+        if (cart.isEmpty()) { results.addView(label("Your shopping cart is empty. Add items from web results or imported CSV prices.")); return }
+        val totals = linkedMapOf<String, Double>()
+        cart.toList().forEach { item ->
+            val card = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(14, 12, 14, 12); background = rounded(0xF5FFFFFF.toInt(), 28f) }
+            card.addView(label(item.name + " — " + item.supplier, 17f))
+            val price = item.price
+            card.addView(label(if (price == null) "Price unknown • Check supplier website" else
+                "$" + "%.2f".format(Locale.US, price) + " " + item.currency + " each", 14f))
+            if (price != null) totals[item.currency] = (totals[item.currency] ?: 0.0) + price * item.quantity
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            row.addView(Button(this).apply { text = "−"; setOnClickListener {
+                if (item.quantity > 1) item.quantity-- else cart.remove(item)
+                saveCart(); showCart()
+            } })
+            row.addView(label("Qty: " + item.quantity, 15f))
+            row.addView(Button(this).apply { text = "+"; setOnClickListener {
+                item.quantity = (item.quantity + 1).coerceAtMost(999); saveCart(); showCart()
+            } })
+            row.addView(Button(this).apply { text = "Remove"; isAllCaps = false; setOnClickListener { cart.remove(item); saveCart(); showCart() } })
+            card.addView(row)
+            if (item.url.startsWith("https://")) card.addView(Button(this).apply {
+                text = "Order at " + item.supplier; isAllCaps = false; setOnClickListener { open(item.url) }
+            })
+            results.addView(card)
+        }
+        val known = if (totals.isEmpty()) "No verified prices" else totals.entries.joinToString(" • ") {
+            "$" + "%.2f".format(Locale.US, it.value) + " " + it.key
+        }
+        results.addView(label("Known subtotal: " + known + "\nExcludes unknown prices, tax, shipping and supplier checkout.", 16f))
+        results.addView(Button(this).apply { text = "Back to catalog"; setOnClickListener { renderOffers() } })
+    }
     private lateinit var search: EditText
     private lateinit var apiUrl: EditText
     private lateinit var results: LinearLayout
@@ -67,11 +135,12 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        loadCart()
         val frame = FrameLayout(this)
         frame.addView(BalloonBackground(this), FrameLayout.LayoutParams(-1, -1))
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(20, 24, 20, 12) }
         frame.addView(root, FrameLayout.LayoutParams(-1, -1))
-        root.addView(TextView(this).apply { text = "🎈 Balloon Price Finder v4"; textSize = 24f; setTextColor(blue); setPadding(0,0,0,8) })
+        root.addView(TextView(this).apply { text = "🎈 Balloon Price Finder v5"; textSize = 24f; setTextColor(blue); setPadding(0,0,0,8) })
         root.addView(label("Free balloon searches open supplier results in your browser. In-app prices require a connected server.", 13f))
         search = EditText(this).apply { hint = "Sempertex 260 red"; setSingleLine(true) }
         search.background = rounded(Color.WHITE)
@@ -97,6 +166,9 @@ class MainActivity : Activity() {
         action("CSV prices") { renderOffers() }
         action("Import CSV") { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "*/*" }, 42) }
         root.addView(actions)
+        cartButton = Button(this).apply { isAllCaps = false; setTextColor(Color.WHITE); backgroundTintList = android.content.res.ColorStateList.valueOf(0xFFF59E0B.toInt()); setOnClickListener { showCart() } }
+        root.addView(cartButton)
+        saveCart()
         summary = label("", 13f)
         root.addView(summary)
         val scroll = ScrollView(this)
@@ -178,6 +250,7 @@ class MainActivity : Activity() {
             val card = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(14,12,14,12); background = rounded(0xF5FFFFFF.toInt(), 28f) }
             card.addView(label(name, 17f))
             card.addView(label(supplier + " • " + priceText + " • " + stock, 14f))
+            card.addView(Button(this).apply { text = "🛒 Add to cart"; isAllCaps = false; setOnClickListener { addToCart(supplier, name, item.optString("url"), price?.toDoubleOrNull(), currency) } })
             card.addView(Button(this).apply { text = "View product / order"; isAllCaps = false; setOnClickListener { open(item.optString("url")) } })
             results.addView(card)
             results.addView(View(this).apply { setBackgroundColor(Color.rgb(230,234,242)) }, LinearLayout.LayoutParams(-1, 6))
@@ -198,6 +271,7 @@ class MainActivity : Activity() {
             val card = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(14,12,14,12); setBackgroundColor(Color.WHITE) }
             card.addView(label(o.name + " — " + o.supplier, 17f))
             card.addView(label(o.brand + " • " + o.size + " • " + o.color + "\n" + o.quantity + " pcs • $" + "%.2f".format(Locale.US,o.price) + " / bag • $" + "%.4f".format(Locale.US,o.unitPrice) + " each", 14f))
+            card.addView(Button(this).apply { text = "🛒 Add to cart"; isAllCaps = false; setOnClickListener { addToCart(o.supplier, o.name, o.url, o.price, "USD") } })
             if (o.url.startsWith("https://")) card.addView(Button(this).apply { text = "View product / order"; setOnClickListener { open(o.url) } })
             results.addView(card)
         }
